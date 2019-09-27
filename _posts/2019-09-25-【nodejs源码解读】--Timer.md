@@ -11,18 +11,6 @@ tags:								#标签
 ---
 
 # Timer源码解读顺序
----
-layout:     post   				    # 使用的布局（不需要改）
-title:      【nodejs源码解读】--Timer 				# 标题 
-subtitle:   Timer源码javascript代码 #副标题
-date:       2019-09-25 				# 时间
-author:     daydreamgirl 						# 作者
-header-img: img/post-bg-2015.jpg 	#这篇文章标题背景图片
-catalog: true 						# 是否归档
-tags:								#标签
-    - nodejs源码
----
-
 ## 依赖的数据结构模块
 ### 双向循环链表
 在NodeJs中几乎所有的网络I/O请求都会设置timeout来控制socket连接超时的情况,这里会大量使用到setTimeout接口，会频繁的有增删操作，链表插入和删除元素的时间复杂度是O(1)，所以这块用双向循环链表来提高Timer模块的性能。timeout计时器插入计时器列表用的是时间轮算法，给相同 ms 级的 timeout 任务共用了一个 timeWrap，相同时间的任务分配在同一个链表，使计时任务的调度和新增的复杂度都是 O(1)， 也达到高效复用了同一个 timeWrap。
