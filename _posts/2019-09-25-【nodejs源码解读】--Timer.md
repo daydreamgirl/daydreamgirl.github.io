@@ -10,7 +10,7 @@ tags:								#标签
     - nodejs源码
 ---
 
-# Timer源码解读顺序
+# JS部分
 ## 依赖的数据结构模块
 ### 双向循环链表
 在NodeJs中几乎所有的网络I/O请求都会设置timeout来控制socket连接超时的情况,这里会大量使用到setTimeout接口，会频繁的有增删操作，链表插入和删除元素的时间复杂度是O(1)，所以这块用双向循环链表来提高Timer模块的性能。timeout计时器插入计时器列表用的是时间轮算法，给相同 ms 级的 timeout 任务共用了一个 timeWrap，相同时间的任务分配在同一个链表，使计时任务的调度和新增的复杂度都是 O(1)， 也达到高效复用了同一个 timeWrap。
@@ -356,3 +356,89 @@ function listOnTimeout(list, now) {
   }
 ```
 上面的接口就是按照情况执行定时器链表，执行完后就可以从最小堆中删掉了
+# C++部分
+## 数据结构
+这块我们用到了二叉树这个数据结构，代码在./deps/uv/src/heap-inl.h，关于二叉树这里不做介绍，只是提及一下libuv里面用了这个
+## C++调用setTimeout
+在上面讲的js部分，有一个insert方法，是把定时器链表插入到最小堆，里面有用到scheduleTimer这个方法,我们在./src/env.cc里面看一下这个接口：
+```
+void Environment::ScheduleTimer(int64_t duration_ms) {
+  if (started_cleanup_) return;
+  uv_timer_start(timer_handle(), RunTimers, duration_ms, 0);
+}
+```
+接着看里面的uv_timer_start
+```
+/*
+  handle:时间模块对象
+  cb:延迟回调函数
+  timeout:延迟时间
+  repeat:是否重复
+*/
+int uv_timer_start(uv_timer_t* handle,
+                   uv_timer_cb cb,
+                   uint64_t timeout,
+                   uint64_t repeat) {
+  uint64_t clamped_timeout; // 要触发的时间
+
+  if (cb == NULL)
+    return UV_EINVAL;
+
+  if (uv__is_active(handle))
+    uv_timer_stop(handle);
+
+  clamped_timeout = handle->loop->time + timeout; // 当前时间加延迟时间就是要触发的时间
+  if (clamped_timeout < timeout)
+    clamped_timeout = (uint64_t) -1;
+
+  handle->timer_cb = cb;
+  handle->timeout = clamped_timeout;
+  handle->repeat = repeat;
+  /* start_id is the second index to be compared in uv__timer_cmp() */
+  handle->start_id = handle->loop->timer_counter++;
+
+  // 将handle对象插入到树中
+  heap_insert(timer_heap(handle->loop),
+              (struct heap_node*) &handle->heap_node,
+              timer_less_than);
+  uv__handle_start(handle);
+
+  return 0;
+}
+```
+将上面的几个参数挂载到handle上，然后插入到树中，现在只是把handle插入到树上，那是如何触发的呢，在node_main_instance.cc里面有NodeMainInstance::Run()这个函数里面有uv_run()这个方法，那是怎么就到了NodeMainInstance这块呢，还是要看一下nodejs入口相关的文章就知道了
+```
+int uv_run(uv_loop_t *loop, uv_run_mode mode) {
+    // ...略
+
+    while (r != 0 && loop->stop_flag == 0) {
+        // 更新时间
+        uv_update_time(loop);
+        uv__run_timers(loop);
+
+        // ...
+    }
+}
+```
+我们接着了解一下uv__run_timers(loop)
+```
+void uv__run_timers(uv_loop_t* loop) {
+  struct heap_node* heap_node;
+  uv_timer_t* handle;
+
+  for (;;) { // 死循环,保证触发所有应该触发的事件
+    heap_node = heap_min(timer_heap(loop)); // 返回延迟事件树中最小的时间点
+    if (heap_node == NULL)
+      break;
+
+    handle = container_of(heap_node, uv_timer_t, heap_node); // 取出handle
+    if (handle->timeout > loop->time)
+      break;
+
+    uv_timer_stop(handle); // 移除当前的handle
+    uv_timer_again(handle); // 如果是interval 需要重新插入一个新的handle到树中
+    handle->timer_cb(handle); // 触发延迟事件
+  }
+}
+```
+这里就把上面的树与事件轮询链接起来了，每一次轮询，首先触发的就是延迟事件，触发的方式就是去树里面找，有没有比当前时间点小的handle，取出一个，删除并触发。
