@@ -13,7 +13,7 @@ tags:								#标签
 # JS部分
 ## 依赖的数据结构模块
 ### 双向循环链表
-在NodeJs中几乎所有的网络I/O请求都会设置timeout来控制socket连接超时的情况,这里会大量使用到setTimeout接口，会频繁的有增删操作，链表插入和删除元素的时间复杂度是O(1)，所以这块用双向循环链表来提高Timer模块的性能。timeout计时器插入计时器列表用的是时间轮算法，给相同 ms 级的 timeout 任务共用了一个 timeWrap，相同时间的任务分配在同一个链表，使计时任务的调度和新增的复杂度都是 O(1)， 也达到高效复用了同一个 timeWrap。
+在NodeJs中几乎所有的网络I/O请求都会设置timeout来控制socket连接超时的情况,这里会大量使用到setTimeout接口，会频繁的有增删操作，而链表插入和删除元素的时间复杂度是O(1)，所以这块用双向循环链表来提高Timer模块的性能。timeout计时器插入计时器列表用的是时间轮算法，给相同 ms 级的 timeout 任务共用了一个 timeWrap，相同时间的任务分配在同一个链表，使计时任务的调度和新增的复杂度都是 O(1)， 也达到高效复用了同一个 timeWrap。
 
 链表源码在lib/internal/linkedlist.js
 ```
@@ -117,7 +117,7 @@ function setTimeout(callback, after, arg1, arg2, arg3) {
   return timeout;
 }
 ```
-其中调用了Timeout这个对象，在这个文件中找到定义Timeout的地方，可以发现是require('internal/timers')的，所以继续去/lib/internal/timers.js
+其中调用了Timeout这个对象，在这个文件中找到定义Timeout的地方，发现是require('internal/timers')的，所以继续去/lib/internal/timers.js
 
 2.Timeout类定义
 
@@ -154,11 +154,11 @@ function Timeout(callback, after, args, isRepeat) {
   initAsyncResource(this, 'Timeout');
 }
 ```
-由此可见必传参数是callback,如果延迟时间没传，则默认是1,initAsyncResource是在async_hooks注册h回调，以跟踪在Nodejs应用程序内部创建的异步资源的寿命
+由此可见必传参数是callback,如果延迟时间没传，则默认是1,initAsyncResource是在async_hooks注册回调，以跟踪在Nodejs应用程序内部创建的异步资源的寿命
 
 3.active(timeout)
 
-继续在/lib/internal/timers.js找active
+回到/lib/timers.js,到了active,还是在/lib/internal/timers.js找active
 ```
 function active(item) {
   insert(item, true, getLibuvNow());
@@ -172,7 +172,7 @@ void GetLibuvNow(const FunctionCallbackInfo<Value>& args) {
 }
 ```
 
-再看一下insert接口
+继续看一下insert接口
 ```
 function insert(item, refed, start) {
   let msecs = item._idleTimeout; // 延迟时间
@@ -214,9 +214,9 @@ function insert(item, refed, start) {
   L.append(list, item); // 往双向循环链表里添加该项
 }
 ```
-这段代码其实就是往特定timeout的链表里插入这个定时器，如果这个特定timeout的链表不存在就创建一个新的链表，把新链表放进最小堆里面，入过该链表已经存在，直接吧这个定时器插进去即可。
+这段代码其实就是往特定timeout的链表里插入这个定时器，如果这个特定timeout的链表不存在就创建一个新的链表，把新链表放进最小堆里面，如过该链表已经存在，直接把这个定时器插进去即可。
 
-到目前为止，定时器已经插进去了，那是怎么触发的呢？
+到目前为止，定时器已经插到链表了，那是怎么触发的呢？
 
 4.定时器的执行逻辑
 
@@ -245,15 +245,15 @@ function insert(item, refed, start) {
 Node.js通过调用setupTimers方法将定时器处理函数processTimers传递给了底层，它最终会被用来调度执行定时器，processTimers方法由lib/internal/timers.js中提供的getTimerCallbacks(runNextTicks)方法运行得到,那先看一下getTimerCallbacks这个方法,找到processTimers这个方法
 ```
   function processTimers(now) {
-    debug('process timer lists %d', now); // now是当前时间
+    debug('process timer lists %d', now); // now是当前时间
     nextExpiry = Infinity;
 
     let list;
     let ranAtLeastOneList = false;
     while (list = timerListQueue.peek()) {
       if (list.expiry > now) { 
-        nextExpiry = list.expiry; //如果定时器链表的过期时间大于现在，那就把下一个要触发的过期时间设为最小堆里面最小的过期时间
-        return refCount > 0 ? nextExpiry : -nextExpiry;
+        nextExpiry = list.expiry; //如果定时器链表的过期时间大于现在，那就把下一个要触发的过期时间设为最小堆里面最小的过期时间
+        return refCount > 0 ? nextExpiry : -nextExpiry; // 返回过期时间
       }
       if (ranAtLeastOneList)
         runNextTicks(); // 执行nextTick回调
@@ -280,13 +280,13 @@ function listOnTimeout(list, now) {
       if (diff < msecs) {
         list.expiry = Math.max(timer._idleStart + msecs, now + 1);
         list.id = timerListId++;
-        timerListQueue.percolateDown(1);
+        timerListQueue.percolateDown(1); // 调整list在最小堆中的位置
         debug('%d list wait because diff is %d', msecs, diff);
         return;
       }
 
       if (ranAtLeastOneTimer)
-        runNextTicks();
+        runNextTicks(); // 如果执行了一个timer，就会执行前一个timer所产生的timeticks
       else
         ranAtLeastOneTimer = true;
 
@@ -310,7 +310,7 @@ function listOnTimeout(list, now) {
       emitBefore(asyncId, timer[trigger_async_id_symbol]);
 
       let start;
-      if (timer._repeat) // 如果是重复定时器
+      if (timer._repeat) // 如果是重复定时器
         start = getLibuvNow(); // 重新设置开始时间
 
       try {
@@ -355,7 +355,7 @@ function listOnTimeout(list, now) {
     }
   }
 ```
-上面的接口就是按照情况执行定时器链表，执行完后就可以从最小堆中删掉了
+上面的接口就是按照情况执行定时器链表，执行完后就可以从最小堆中删掉了
 # C++部分
 ## 数据结构
 这块我们用到了二叉树这个数据结构，代码在./deps/uv/src/heap-inl.h，关于二叉树这里不做介绍，只是提及一下libuv里面用了这个
@@ -406,7 +406,7 @@ int uv_timer_start(uv_timer_t* handle,
   return 0;
 }
 ```
-将上面的几个参数挂载到handle上，然后插入到树中，现在只是把handle插入到树上，那是如何触发的呢，在node_main_instance.cc里面有NodeMainInstance::Run()这个函数里面有uv_run()这个方法，那是怎么就到了NodeMainInstance这块呢，还是要看一下nodejs入口相关的文章就知道了
+将上面的几个参数挂载到handle上，然后插入到树中，现在只是把handle插入到树上，那是如何触发的呢，在node_main_instance.cc里面有NodeMainInstance::Run()这个函数里面有uv_run()这个方法，那是怎么就到了NodeMainInstance这块呢，还是要看一下nodejs入口相关的文章就知道了
 ```
 int uv_run(uv_loop_t *loop, uv_run_mode mode) {
     // ...略
