@@ -379,7 +379,7 @@ int uv_timer_start(uv_timer_t* handle,
                    uv_timer_cb cb,
                    uint64_t timeout,
                    uint64_t repeat) {
-  uint64_t clamped_timeout; // 要触发的时间
+  uint64_t clamped_timeout; // 要触发的时间
 
   if (cb == NULL)
     return UV_EINVAL;
@@ -441,4 +441,4 @@ void uv__run_timers(uv_loop_t* loop) {
   }
 }
 ```
-这里就把上面的树与事件轮询链接起来了，每一次轮询，首先触发的就是延迟事件，触发的方式就是去树里面找，有没有比当前时间点小的handle，取出一个，删除并触发。
+这里就把上面的树与事件轮询连接起来了，每一次轮询，首先触发的就是延迟事件，触发的方式就是去树里面找，有没有比当前时间点小的handle，取出一个，删除并触发。
